@@ -11,7 +11,9 @@ struct ButtonFrame {
     }
     struct Result {
         let jpeg: Data
-        let count: Int
+        let labels: [(CGRect, String)]
+        let canvasSize: CGSize
+        var count: Int { labels.count }
         let hits: Int
     }
     enum Problem: LocalizedError {
@@ -121,6 +123,56 @@ struct ButtonFrame {
                 }
             }
         }
+        // A reference layout identifies where to look. The text in the current
+        // crop must still match, so a changed or hidden button is never inserted.
+        for region in pack.buttonRegions {
+            let field = CGRect(x: 0, y: 0, width: image.width, height: image.height)
+            let matches = region.anchors.compactMap { anchor -> CGPoint? in
+                guard let target = pack.lookup(anchor.ja), let line = lines.first(where: {
+                    pack.lookup($0.text) == target && abs($0.box.midX / field.width - anchor.x) < 0.045 &&
+                    abs($0.box.midY / field.height - anchor.y) < 0.045
+                }) else { return nil }
+                return CGPoint(x: line.box.midX / field.width - anchor.x, y: line.box.midY / field.height - anchor.y)
+            }
+            guard matches.count >= 2 else { continue }
+            let offset = matches.reduce(CGPoint.zero) { CGPoint(x: $0.x + $1.x, y: $0.y + $1.y) }
+            let rect = CGRect(x: (region.x + offset.x / CGFloat(matches.count)) * field.width,
+                              y: (region.y + offset.y / CGFloat(matches.count)) * field.height,
+                              width: region.width * field.width, height: region.height * field.height).integral.intersection(field)
+            guard !rect.isEmpty, let crop = image.cropping(to: rect) else { continue }
+            let allowed = Set(([region.ja] + region.variants).map(GameLexicon.key))
+            var match: CGRect?
+            for language in ["ja-JP", "zh-Hans"] {
+                let read = VNRecognizeTextRequest()
+                read.recognitionLevel = .accurate
+                read.recognitionLanguages = [language]
+                read.customWords = [region.ja]
+                read.usesLanguageCorrection = false
+                try VNImageRequestHandler(cgImage: crop, options: [:]).perform([read])
+                for item in read.results ?? [] {
+                    for candidate in item.topCandidates(3) {
+                        var wordBox: CGRect?
+                        if allowed.contains(GameLexicon.key(candidate.string)) { wordBox = item.boundingBox }
+                        else if let word = ([region.ja] + region.variants).first(where: { candidate.string.contains($0) }),
+                                let range = candidate.string.range(of: word),
+                                let part = try? candidate.boundingBox(for: range) { wordBox = part.boundingBox }
+                        guard let b = wordBox else { continue }
+                        match = CGRect(x: rect.minX + b.minX * rect.width, y: rect.minY + (1 - b.maxY) * rect.height,
+                                       width: b.width * rect.width, height: b.height * rect.height)
+                        break
+                    }
+                    if match != nil { break }
+                }
+                if match != nil { break }
+            }
+            if let box = match {
+                lines.removeAll { line in
+                    let cut = line.box.intersection(box)
+                    return !cut.isNull && cut.width * cut.height > line.box.width * line.box.height * 0.55
+                }
+                lines.append(Line(text: region.ja, box: box))
+            }
+        }
         guard !lines.isEmpty else { throw Problem.empty }
         var translations: [String: String] = [:]
         var unknown: [String] = []
@@ -150,7 +202,8 @@ struct ButtonFrame {
         try Task.checkCancellation()
         guard !translations.isEmpty else { throw Problem.language }
         let labels = lines.compactMap { line in translations[line.text].map { (line.box, $0) } }
-        return Result(jpeg: try paint(image, labels), count: labels.count, hits: hits)
+        return Result(jpeg: try paint(image, labels), labels: labels,
+                      canvasSize: CGSize(width: image.width, height: image.height), hits: hits)
     }
 
     private static func paint(_ image: CGImage, _ labels: [(CGRect, String)]) throws -> Data {

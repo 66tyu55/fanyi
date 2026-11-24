@@ -6,14 +6,26 @@ struct GameLexicon {
     var recognitionWords: [String] { Array(words.keys.filter { $0.count <= 24 }.sorted().prefix(512)) }
     var error: String?
     private(set) var gameURL: URL?
+    private(set) var buttonRegions: [ButtonRegion] = []
 
     struct Entry: Codable {
         let ja: String
         let zhHans: String
     }
+    struct Anchor: Codable { let ja: String; let x: Double; let y: Double }
+    struct ButtonRegion: Codable {
+        let ja: String
+        let variants: [String]
+        let anchors: [Anchor]
+        let x: Double
+        let y: Double
+        let width: Double
+        let height: Double
+    }
     struct Pack: Codable {
         let version: Int
         var gameURLScheme: String?
+        var buttonRegions: [ButtonRegion]?
         let entries: [Entry]
     }
 
@@ -58,6 +70,11 @@ struct GameLexicon {
                 } else {
                     result.words[key] = value
                 }
+            }
+            result.buttonRegions = (pack.buttonRegions ?? []).prefix(24).filter { region in
+                result.lookup(region.ja) != nil && (2...8).contains(region.anchors.count) &&
+                region.width > 0 && region.height > 0 && region.x >= 0 && region.y >= 0 &&
+                region.x + region.width <= 1 && region.y + region.height <= 1
             }
         } catch {
             result.error = "个人词库未能读取。"

@@ -18,6 +18,7 @@ private struct Placement: Codable {
     let label: String
     let distance: Double?
     var nearby: [String] = []
+    var drawDistance: Double?
 }
 
 private struct SampleReport: Codable {
@@ -112,6 +113,11 @@ private struct LayoutCheckView: View {
                                 }
                                 report.placements.append(Placement(label: anchor.target, distance: offsets.min(), nearby: local))
                             }
+                            report.placements[report.placements.count - 1].drawDistance = result.labels.compactMap { rect, value in
+                                guard GameLexicon.key(value) == key else { return nil }
+                                return hypot((rect.midX / result.canvasSize.width - anchor.x) * CGFloat(source.width),
+                                             (rect.midY / result.canvasSize.height - anchor.y) * CGFloat(source.height))
+                            }.min()
                         }
                     } catch { let e = error as NSError; report.error = "\(e.domain)(\(e.code))" }
                     reports.append(report)
