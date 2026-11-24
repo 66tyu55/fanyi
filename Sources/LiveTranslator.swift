@@ -12,6 +12,9 @@ final class LiveTranslator: NSObject, ObservableObject, SCContentSharingPickerOb
     @Published private(set) var message = "点开始，共享屏幕后切回游戏。"
     @Published private(set) var downloadRequest: UUID?
     @Published private(set) var lexiconStatus = ""
+    @Published private(set) var windowReady = false
+    @Published private(set) var windowOpen = false
+    var awaitingWindow: Bool { phase == .running && !windowOpen }
     @Published private var phase: Phase = .idle
     var canStart: Bool { phase == .idle }
     var isStopping: Bool { phase == .stopping }
@@ -31,11 +34,21 @@ final class LiveTranslator: NSObject, ObservableObject, SCContentSharingPickerOb
     private var cache: [String: String] = [:]
     private var lexicon = GameLexicon()
     private var cacheOrder: [String] = []
+    private var events: [String] = []
+    private var reportedFrame = false
+    private var reportedTranslation = false
+    private var reportedHit = false
 
     override init() {
         super.init()
         captions.onDismiss = { [weak self] in self?.stop() }
-        captions.onFailure = { [weak self] error in self?.stop("字幕窗口未启动。\(error)") }
+        captions.onFailure = { [weak self] error in self?.message = error }
+        captions.onReady = { [weak self] ready in self?.windowReady = ready }
+        captions.onOpened = { [weak self] in
+            self?.windowOpen = true
+            self?.message = "字幕小窗已打开，可以切回游戏。"
+        }
+        captions.trace = { [weak self] event in self?.record(event) }
         NotificationCenter.default.addObserver(self, selector: #selector(locked),
                                                 name: UIApplication.protectedDataWillBecomeUnavailableNotification,
                                                 object: nil)
@@ -43,11 +56,28 @@ final class LiveTranslator: NSObject, ObservableObject, SCContentSharingPickerOb
 
     @objc private func locked() { stop() }
 
+    private func record(_ event: String) {
+        events.append("\(Int(Date().timeIntervalSince1970)) \(event)")
+        if events.count > 50 { events.removeFirst() }
+        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        try? events.joined(separator: "\n").write(to: documents.appendingPathComponent("LiveDiagnostics.txt"),
+                                                  atomically: true, encoding: .utf8)
+    }
+
+    func openWindow() {
+        if awaitingWindow { captions.openWindow() }
+    }
+
     func start() {
         guard phase == .idle else { return }
         let ticket = UUID()
         generation = ticket
         phase = .preparing
+        events = []
+        reportedFrame = false
+        reportedTranslation = false
+        reportedHit = false
+        record("start")
         message = "正在检查日语和简体中文语言包…"
         Task {
             let loaded = await Task.detached(priority: .userInitiated) { GameLexicon.load() }.value
@@ -87,6 +117,7 @@ final class LiveTranslator: NSObject, ObservableObject, SCContentSharingPickerOb
     }
 
     func setGameVisible(_ visible: Bool) {
+        if visible != gameVisible && phase == .running { record(visible ? "game.background" : "game.foreground") }
         gameVisible = visible
         reader?.setEnabled(visible && phase == .running)
         if !visible && phase == .running {
@@ -149,10 +180,11 @@ final class LiveTranslator: NSObject, ObservableObject, SCContentSharingPickerOb
                 try? await newStream.stopCapture()
                 return
             }
-            if !keepWindow { try captions.start() }
             phase = .running
+            if !keepWindow { captions.start() }
             output.setEnabled(gameVisible)
-            message = "切回游戏即可读简体字幕。关闭小窗会结束共享。"
+            record("share.started words=\(lexicon.count)")
+            message = windowOpen ? "字幕小窗已打开，可以切回游戏。" : "共享已开启。点「打开字幕小窗」，然后切回游戏。"
         } catch {
             if generation == ticket { stop("无法启动翻译。\(error.localizedDescription)") }
         }
@@ -166,6 +198,10 @@ final class LiveTranslator: NSObject, ObservableObject, SCContentSharingPickerOb
 
     private func receive(_ raw: [String], ticket: UUID) {
         guard ticket == generation, phase == .running, gameVisible else { return }
+        if !reportedFrame {
+            reportedFrame = true
+            record("ocr.frame")
+        }
         // If the OS includes the PiP in a captured frame, ignore our own Chinese subtitles.
         let originals = Set(latest)
         let text = Array(raw.filter { line in
@@ -187,7 +223,9 @@ final class LiveTranslator: NSObject, ObservableObject, SCContentSharingPickerOb
         if !latest.isEmpty, lexicon.count > 0 {
             let hits = latest.filter { lexicon.lookup($0) != nil }.count
             lexiconStatus = "个人词库 \(lexicon.count) 条 · 最近一屏命中 \(hits)/\(latest.count)"
+            if hits > 0 && !reportedHit { reportedHit = true; record("lexicon.hits=\(hits)") }
         }
+        if !rendered.isEmpty && !reportedTranslation { reportedTranslation = true; record("captions.translated") }
         captions.show(rendered)
     }
 
@@ -206,14 +244,15 @@ final class LiveTranslator: NSObject, ObservableObject, SCContentSharingPickerOb
                     if cache[key] == nil { cacheOrder.append(key) }
                     cache[key] = r.targetText
                 }
-                guard unknown.allSatisfy({ cache[$0] != nil }) else {
-                    stop("部分文字未得到翻译。请重新开始。")
-                    return
-                }
                 while cacheOrder.count > 350 { cache.removeValue(forKey: cacheOrder.removeFirst()) }
                 displayCached()
+                if unknown.contains(where: { cache[$0] == nil }) { return }
             } catch {
-                if generation == ticket { stop("设备端翻译中断。\(error.localizedDescription)") }
+                if generation == ticket && !Task.isCancelled {
+                    let value = error as NSError
+                    record("translation.error \(value.domain)(\(value.code))")
+                    message = "设备端暂时未译出部分文字，词库字幕仍可使用。"
+                }
                 return
             }
         }
@@ -241,7 +280,10 @@ final class LiveTranslator: NSObject, ObservableObject, SCContentSharingPickerOb
         cache = [:]
         cacheOrder = []
         emptyFrames = 0
+        windowOpen = false
+        windowReady = false
         captions.stop()
+        record("stopped")
         message = reason
         Task {
             if let old { try? await old.stopCapture() }

@@ -6,29 +6,34 @@ struct CaptionPreview: UIViewRepresentable {
     let captions: Captions
     func makeUIView(context: Context) -> PreviewLayerView {
         let view = PreviewLayerView()
-        view.layer.addSublayer(captions.layer)
+        captions.attach(view)
         return view
     }
-    func updateUIView(_ view: PreviewLayerView, context: Context) { view.setNeedsLayout() }
+    func updateUIView(_ view: PreviewLayerView, context: Context) {}
 }
 
 final class PreviewLayerView: UIView {
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        layer.sublayers?.first?.frame = bounds
-    }
+    override class var layerClass: AnyClass { AVSampleBufferDisplayLayer.self }
+    var videoLayer: AVSampleBufferDisplayLayer { layer as! AVSampleBufferDisplayLayer }
 }
 
 @MainActor
 final class Captions: NSObject, AVPictureInPictureControllerDelegate, AVPictureInPictureSampleBufferPlaybackDelegate {
-    let layer = AVSampleBufferDisplayLayer()
+    private weak var preview: PreviewLayerView?
+    private var layer: AVSampleBufferDisplayLayer? { preview?.videoLayer }
+    private var timebase: CMTimebase?
     var onDismiss: (() -> Void)?
     var onFailure: ((String) -> Void)?
+    var onOpened: (() -> Void)?
+    var onReady: ((Bool) -> Void)?
+    var trace: ((String) -> Void)?
     private var controller: AVPictureInPictureController?
     private var ticker: Task<Void, Never>?
     private var wantsWindow = false
     private var startIssued = false
-    private var beganAt: TimeInterval = 0
+    private var issuedAt: TimeInterval = 0
+    private var ready = false
+    private var audioActive = false
     private var pageSince: TimeInterval = 0
     private var page = 0
     private var pages: [String] = []
@@ -38,37 +43,93 @@ final class Captions: NSObject, AVPictureInPictureControllerDelegate, AVPictureI
     private let placeholder = "等待游戏文字"
     private let font = UIFont.systemFont(ofSize: 42, weight: .medium)
 
-    override init() {
-        super.init()
+    func attach(_ view: PreviewLayerView) {
+        guard preview !== view else { return }
+        preview = view
+        let layer = view.videoLayer
         layer.videoGravity = .resizeAspect
         layer.backgroundColor = UIColor.black.cgColor
+        var clock: CMTimebase?
+        if CMTimebaseCreateWithSourceClock(allocator: nil, sourceClock: CMClockGetHostTimeClock(), timebaseOut: &clock) == noErr,
+           let clock {
+            CMTimebaseSetTime(clock, time: .zero)
+            CMTimebaseSetRate(clock, rate: 1)
+            layer.controlTimebase = clock
+            timebase = clock
+        }
         render()
+        prepareController()
     }
 
-    func start() throws {
-        guard AVPictureInPictureController.isPictureInPictureSupported() else {
-            throw NSError(domain: "GameLens", code: 1, userInfo: [NSLocalizedDescriptionKey: "这台设备当前无法使用画中画。"])
-        }
-        let audio = AVAudioSession.sharedInstance()
-        try audio.setCategory(.playback, mode: .moviePlayback, options: [.mixWithOthers])
-        try audio.setActive(true)
+    private func prepareController() {
+        guard let layer, AVPictureInPictureController.isPictureInPictureSupported() else { return }
         let source = AVPictureInPictureController.ContentSource(sampleBufferDisplayLayer: layer, playbackDelegate: self)
         let pip = AVPictureInPictureController(contentSource: source)
         pip.delegate = self
-        pip.canStartPictureInPictureAutomaticallyFromInline = true
         pip.requiresLinearPlayback = true
         controller = pip
+    }
+
+    func start() {
         wantsWindow = true
         startIssued = false
-        beganAt = ProcessInfo.processInfo.systemUptime
-        pageSince = beganAt
+        pageSince = ProcessInfo.processInfo.systemUptime
+        if controller == nil { prepareController() }
+        activateAudio()
         render()
+        controller?.invalidatePlaybackState()
+        tick()
+        ticker?.cancel()
         ticker = Task { [weak self] in
             while !Task.isCancelled {
                 self?.tick()
                 try? await Task.sleep(nanoseconds: 500_000_000)
             }
         }
+    }
+
+    private func activateAudio() {
+        guard !audioActive else { return }
+        do {
+            let audio = AVAudioSession.sharedInstance()
+            try audio.setCategory(.playback, mode: .moviePlayback, options: [.mixWithOthers])
+            try audio.setActive(true)
+            audioActive = true
+        } catch { trace?("audio " + Self.errorCodes(error)) }
+    }
+
+    // AVKit requests must originate from the visible Play/PiP control. The
+    // system share sheet may still be dismissing when capture starts.
+    func openWindow() {
+        guard wantsWindow, !startIssued, controller?.isPictureInPictureActive != true else { return }
+        activateAudio()
+        tick()
+        guard ready, let pip = controller else {
+            onFailure?("字幕预览正在准备，请稍后再点。")
+            return
+        }
+        startIssued = true
+        issuedAt = ProcessInfo.processInfo.systemUptime
+        ready = false
+        onReady?(false)
+        trace?("pip.request " + stateDescription)
+        pip.startPictureInPicture()
+    }
+
+    private var stateDescription: String {
+        let scene = preview?.window?.windowScene?.activationState.rawValue ?? -9
+        return "scene=\(scene) attached=\(preview?.window != nil) frame=\(layer?.isReadyForDisplay == true) possible=\(controller?.isPictureInPicturePossible == true) audio=\(audioActive)"
+    }
+
+    private static func errorCodes(_ error: Error) -> String {
+        var value: NSError? = error as NSError
+        var codes: [String] = []
+        for _ in 0..<4 {
+            guard let current = value else { break }
+            codes.append("\(current.domain)(\(current.code))")
+            value = current.userInfo[NSUnderlyingErrorKey] as? NSError
+        }
+        return codes.joined(separator: " / ")
     }
 
     func stop() {
@@ -78,12 +139,17 @@ final class Captions: NSObject, AVPictureInPictureControllerDelegate, AVPictureI
         controller?.delegate = nil
         if controller?.isPictureInPictureActive == true { controller?.stopPictureInPicture() }
         controller = nil
+        ready = false
+        startIssued = false
         previous = []
         pages = []
         page = 0
-        layer.sampleBufferRenderer.flush()
+        layer?.sampleBufferRenderer.flush()
         render()
-        try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
+        if audioActive {
+            try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
+            audioActive = false
+        }
     }
 
     func show(_ lines: [String]) {
@@ -96,16 +162,19 @@ final class Captions: NSObject, AVPictureInPictureControllerDelegate, AVPictureI
     }
 
     private func tick() {
-        guard wantsWindow, let pip = controller else { return }
+        guard wantsWindow else { return }
         let now = ProcessInfo.processInfo.systemUptime
-        if !pip.isPictureInPictureActive {
-            if !startIssued && pip.isPictureInPicturePossible {
-                startIssued = true
-                pip.startPictureInPicture()
-            } else if now - beganAt > 12 {
-                onFailure?("字幕窗口未能打开。请在系统设置中允许画中画，再点开始。")
-                return
-            }
+        if startIssued, controller?.isPictureInPictureActive != true, now - issuedAt > 12 {
+            startIssued = false
+            trace?("pip.timeout " + stateDescription)
+            onFailure?("小窗未响应。屏幕仍在共享，可以重试。")
+        }
+        let available = !startIssued && controller?.isPictureInPicturePossible == true &&
+            preview?.window?.windowScene?.activationState == .foregroundActive && layer?.isReadyForDisplay == true
+        if ready != available {
+            ready = available
+            onReady?(available)
+            if available { trace?("pip.ready " + stateDescription) }
         }
         if pages.count > 1, now - pageSince >= 4.5 {
             page = (page + 1) % pages.count
@@ -142,6 +211,7 @@ final class Captions: NSObject, AVPictureInPictureControllerDelegate, AVPictureI
     }
 
     private func render() {
+        guard let layer else { return }
         var pixel: CVPixelBuffer?
         let options = [kCVPixelBufferIOSurfacePropertiesKey: [:] as NSDictionary] as CFDictionary
         let w = Int(size.width), h = Int(size.height)
@@ -168,7 +238,7 @@ final class Captions: NSObject, AVPictureInPictureControllerDelegate, AVPictureI
         guard CMVideoFormatDescriptionCreateForImageBuffer(allocator: nil, imageBuffer: pixel, formatDescriptionOut: &format) == noErr,
               let format else { return }
         var timing = CMSampleTimingInfo(duration: CMTime(value: 1, timescale: 2),
-                                       presentationTimeStamp: CMClockGetTime(CMClockGetHostTimeClock()),
+                                       presentationTimeStamp: timebase.map { CMTimebaseGetTime($0) } ?? CMClockGetTime(CMClockGetHostTimeClock()),
                                        decodeTimeStamp: .invalid)
         var sample: CMSampleBuffer?
         guard CMSampleBufferCreateReadyWithImageBuffer(allocator: nil, imageBuffer: pixel, formatDescription: format,
@@ -186,12 +256,26 @@ final class Captions: NSObject, AVPictureInPictureControllerDelegate, AVPictureI
 
     nonisolated func pictureInPictureController(_ pip: AVPictureInPictureController, failedToStartPictureInPictureWithError error: Error) {
         Task { @MainActor in
-            if wantsWindow && pip === controller { onFailure?(error.localizedDescription) }
+            guard wantsWindow, pip === controller else { return }
+            startIssued = false
+            let codes = Self.errorCodes(error)
+            let reason = (error as NSError).localizedFailureReason ?? ""
+            trace?("pip.failed " + codes + " " + String(reason.prefix(160)) + " " + stateDescription)
+            onFailure?("小窗未能打开（\(codes)）。屏幕仍在共享，可以重试。")
+            tick()
+        }
+    }
+    nonisolated func pictureInPictureControllerDidStartPictureInPicture(_ pip: AVPictureInPictureController) {
+        Task { @MainActor in
+            guard wantsWindow, pip === controller else { return }
+            startIssued = false
+            trace?("pip.opened " + stateDescription)
+            onOpened?()
         }
     }
     nonisolated func pictureInPictureControllerDidStopPictureInPicture(_ pip: AVPictureInPictureController) {
         Task { @MainActor in
-            if wantsWindow && pip === controller { onDismiss?() }
+            if wantsWindow && pip === controller && !startIssued { onDismiss?() }
         }
     }
     nonisolated func pictureInPictureController(_ controller: AVPictureInPictureController, setPlaying playing: Bool) {}

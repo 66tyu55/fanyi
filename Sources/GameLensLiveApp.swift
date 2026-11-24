@@ -24,12 +24,22 @@ struct LiveView: View {
             if !live.lexiconStatus.isEmpty {
                 Text(live.lexiconStatus).font(.footnote).foregroundStyle(.secondary)
             }
-            Button(live.canStart ? "开始实时翻译" : "停止翻译") {
-                if live.canStart { live.start() } else { live.stop() }
+            if live.awaitingWindow {
+                Button("打开字幕小窗") { live.openWindow() }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .disabled(!live.windowReady)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .disabled(live.isStopping)
+            if live.canStart {
+                Button("开始实时翻译") { live.start() }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+            } else {
+                Button("停止翻译") { live.stop() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
+                    .disabled(live.isStopping)
+            }
         }
         .padding(26)
         .frame(maxWidth: 580)
