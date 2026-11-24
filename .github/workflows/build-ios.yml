@@ -19,3 +19,11 @@ jobs:
           path: build/GameLensLive.ipa
           if-no-files-found: error
           retention-days: 7
+      - name: Compile independent layout checks
+        run: python3 build.py --layout-check build/layout-check/GameLensLive.ipa
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GameLensLayoutChecks
+          path: build/layout-check/GameLensLive.ipa
+          if-no-files-found: error
+          retention-days: 7

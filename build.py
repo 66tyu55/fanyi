@@ -15,7 +15,7 @@ def output(*args):
     return subprocess.check_output(args, text=True).strip()
 
 
-def build(destination):
+def build(destination, root=ROOT):
     sdk_version = output("xcrun", "--sdk", "iphoneos", "--show-sdk-version")
     if int(sdk_version.split(".")[0]) < 27:
         raise RuntimeError("The live capture target requires the iPadOS 27 SDK.")
@@ -24,7 +24,7 @@ def build(destination):
         stage = Path(temp)
         app = stage / "Payload" / "GameLensLive.app"
         subprocess.run([
-            "xcodebuild", "-project", str(ROOT / "GameLensLive.xcodeproj"), "-target", "GameLensLive",
+            "xcodebuild", "-project", str(root / "GameLensLive.xcodeproj"), "-target", "GameLensLive",
             "-configuration", "Release", "-sdk", "iphoneos", "ARCHS=arm64", "ONLY_ACTIVE_ARCH=NO",
             "CODE_SIGNING_ALLOWED=NO", f"SYMROOT={stage / 'products'}",
             f"OBJROOT={stage / 'objects'}", "build",
@@ -54,5 +54,21 @@ def build(destination):
     print(destination, flush=True)
 
 
+def build_layout_check(destination):
+    with tempfile.TemporaryDirectory(prefix="GameLensLayoutCheck-") as temp:
+        project = Path(temp)
+        sources = project / "Sources"
+        sources.mkdir()
+        shutil.copytree(ROOT / "GameLensLive.xcodeproj", project / "GameLensLive.xcodeproj")
+        shutil.copyfile(ROOT / "Info.plist", project / "Info.plist")
+        for name in ("GameLexicon.swift", "ButtonFrame.swift", "ButtonIntent.swift"):
+            shutil.copyfile(ROOT / "Sources" / name, sources / name)
+        shutil.copyfile(ROOT / "Tests" / "OnDeviceLayoutCheck.swift", sources / "OnDeviceLayoutCheck.swift")
+        build(destination, project)
+
+
 if __name__ == "__main__":
-    build(Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else ROOT / "build" / "GameLensLive.ipa")
+    if len(sys.argv) == 3 and sys.argv[1] == "--layout-check":
+        build_layout_check(Path(sys.argv[2]).resolve())
+    else:
+        build(Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else ROOT / "build" / "GameLensLive.ipa")
