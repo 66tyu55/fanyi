@@ -3,6 +3,7 @@ import Foundation
 struct GameLexicon {
     private var words: [String: String] = [:]
     var count: Int { words.count }
+    var recognitionWords: [String] { Array(words.keys.filter { $0.count <= 24 }.sorted().prefix(512)) }
     var error: String?
     private(set) var gameURL: URL?
 
@@ -21,7 +22,12 @@ struct GameLexicon {
             .components(separatedBy: .whitespacesAndNewlines).joined()
     }
 
-    func lookup(_ text: String) -> String? { words[Self.key(text)] }
+    func lookup(_ text: String) -> String? {
+        let key = Self.key(text)
+        if let exact = words[key] { return exact }
+        let ornaments = CharacterSet(charactersIn: "〈〉《》‹›※◆◇●○◯■□▶◀←→×•")
+        return words[key.trimmingCharacters(in: ornaments)]
+    }
 
     static func load() -> GameLexicon {
         let files = FileManager.default

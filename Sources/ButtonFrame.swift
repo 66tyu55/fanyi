@@ -44,11 +44,17 @@ struct ButtonFrame {
         request.recognitionLevel = .accurate
         request.recognitionLanguages = ["ja-JP", "en-US"]
         request.usesLanguageCorrection = true
+        request.minimumTextHeight = 0.007
+        request.customWords = pack.recognitionWords
         try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
         let extent = CGRect(x: 0, y: 0, width: image.width, height: image.height)
         var labels = [Line]()
         for result in request.results ?? [] {
-            guard let candidate = result.topCandidates(1).first, candidate.confidence >= 0.3 else { continue }
+            let candidates = result.topCandidates(3)
+            guard let best = candidates.first, best.confidence >= 0.3 else { continue }
+            let candidate = candidates.first {
+                $0.confidence + 0.12 >= best.confidence && pack.lookup($0.string) != nil
+            } ?? best
             // A wide Vision line can span two separate menu buttons. Split only on a large visual gap.
             let words = candidate.string.split(whereSeparator: \.isWhitespace)
             var groups: [(String, CGRect)] = []
@@ -92,7 +98,29 @@ struct ButtonFrame {
                 UIImage(cgImage: source).draw(in: CGRect(origin: .zero, size: size))
             }.cgImage ?? source
         } else { image = source }
-        let lines = try Self.lines(image, pack: pack)
+        var lines = try Self.lines(image, pack: pack)
+        if longSide < 1600, pack.count > 0 {
+            // Small icon-and-text menus sometimes merge into a single full-frame observation.
+            // A cropped pass can recover a known button without guessing labels from its position.
+            let field = CGRect(x: 0, y: 0, width: image.width, height: image.height)
+            for y in [CGFloat(0), 0.46] {
+                let tile = CGRect(x: 0, y: y * field.height, width: field.width * 0.30,
+                                  height: field.height * 0.54).integral.intersection(field)
+                guard let crop = image.cropping(to: tile) else { continue }
+                for item in try Self.lines(crop, pack: pack) where pack.lookup(item.text) != nil {
+                    if item.box.maxX >= tile.width - 2 || (y > 0 && item.box.minY <= 2) { continue }
+                    let box = item.box.offsetBy(dx: tile.minX, dy: tile.minY)
+                    let candidate = Line(text: item.text, box: box)
+                    if let index = lines.firstIndex(where: { line in
+                        let inner = box.intersection(line.box)
+                        return !inner.isNull && inner.width * inner.height >= box.width * box.height * 0.66 &&
+                            line.box.width <= box.width * 2.2
+                    }) {
+                        if pack.lookup(lines[index].text) == nil { lines[index] = candidate }
+                    } else { lines.append(candidate) }
+                }
+            }
+        }
         guard !lines.isEmpty else { throw Problem.empty }
         var translations: [String: String] = [:]
         var unknown: [String] = []
