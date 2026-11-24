@@ -9,8 +9,8 @@
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
     <key>CFBundleName</key><string>GameLensLive</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>1.0.1</string>
-    <key>CFBundleVersion</key><string>2</string>
+    <key>CFBundleShortVersionString</key><string>1.1</string>
+    <key>CFBundleVersion</key><string>3</string>
     <key>CFBundleSupportedPlatforms</key><array><string>iPhoneOS</string></array>
     <key>LSRequiresIPhoneOS</key><true/>
     <key>UIFileSharingEnabled</key><true/>
@@ -20,8 +20,8 @@
     <key>CFBundleIcons~ipad</key>
     <dict><key>CFBundlePrimaryIcon</key><dict><key>CFBundleIconFiles</key>
     <array><string>AppIcon76</string><string>AppIcon83</string></array></dict></dict>
-    <key>NSScreenCaptureUsageDescription</key><string>在此 iPad 上识别游戏画面的日文，并在画中画里显示简体字幕。</string>
-    <key>UIBackgroundModes</key><array><string>audio</string><string>screen-capture</string></array>
+    <key>NSScreenCaptureUsageDescription</key><string>取一张游戏画面，在原按钮的位置显示简体中文。取到画面后立即停止共享。</string>
+    <key>UIBackgroundModes</key><array><string>screen-capture</string></array>
     <key>UIApplicationSceneManifest</key>
     <dict><key>UIApplicationSupportsMultipleScenes</key><false/><key>UISceneConfigurations</key><dict/></dict>
     <key>UILaunchScreen</key><dict/>

@@ -3,62 +3,73 @@ import Translation
 
 @main
 struct GameLensLiveApp: App {
-    var body: some Scene {
-        WindowGroup { LiveView() }
-    }
+    var body: some Scene { WindowGroup { GameLensView() } }
 }
 
-struct LiveView: View {
-    @StateObject private var live = LiveTranslator()
+struct GameLensView: View {
+    @StateObject private var capture = CaptureOnce()
     @Environment(\.scenePhase) private var scenePhase
+    @State private var download: TranslationSession.Configuration?
+    @State private var languageStatus = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            Text("游戏译镜").font(.largeTitle.bold())
-            Text("日语 → 简体中文").font(.title3)
-            CaptionPreview(captions: live.captions)
-                .aspectRatio(2.45, contentMode: .fit)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-                .accessibilityLabel("简体字幕预览")
-            Text(live.message).foregroundStyle(.secondary)
-            if !live.lexiconStatus.isEmpty {
-                Text(live.lexiconStatus).font(.footnote).foregroundStyle(.secondary)
-            }
-            if live.awaitingWindow {
-                Button("打开字幕小窗") { live.openWindow() }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-                    .disabled(!live.windowReady)
-            }
-            if live.canStart {
-                Button("开始实时翻译") { live.start() }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-            } else {
-                Button("停止翻译") { live.stop() }
-                    .buttonStyle(.bordered)
-                    .controlSize(.large)
-                    .disabled(live.isStopping)
-            }
-        }
-        .padding(26)
-        .frame(maxWidth: 580)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background {
-            if let ticket = live.downloadRequest {
-                Color.clear.translationTask(source: LiveTranslator.japanese,
-                                            target: LiveTranslator.chinese) { session in
-                    do {
-                        try await session.prepareTranslation()
-                        await live.languageReady(ticket)
-                    } catch {
-                        await live.languageFailed(ticket, error: error)
+        Group {
+            if let image = capture.preview {
+                ZStack(alignment: .bottomTrailing) {
+                    Color.black.ignoresSafeArea()
+                    Image(uiImage: image)
+                        .resizable().scaledToFit()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .ignoresSafeArea()
+                        .accessibilityLabel(capture.message)
+                    Button(capture.pack.gameURL == nil ? "收起" : "收起，回游戏") {
+                        capture.returnToGame()
                     }
-                }.id(ticket)
+                    .buttonStyle(.borderedProminent).padding(10)
+                }
+                .persistentSystemOverlays(.hidden)
+            } else {
+                VStack(alignment: .leading, spacing: 18) {
+                    Text("游戏按钮翻译").font(.largeTitle.bold())
+                    Text("日语 → 简体中文").font(.title3)
+                    Text("先在游戏中打开要看的菜单，再来取图。看完原位中文，点「收起，回游戏」继续。")
+                    if capture.phase == .idle {
+                        Button("取一张游戏画面") { capture.begin() }
+                            .buttonStyle(.borderedProminent).controlSize(.large)
+                    } else {
+                        if capture.phase == .waiting, capture.pack.gameURL != nil {
+                            Button("切到游戏取图") { capture.openGame() }.buttonStyle(.borderedProminent)
+                        }
+                        Button("取消") { capture.clear("已取消取图。") }.buttonStyle(.bordered)
+                    }
+                    if !capture.message.isEmpty { Text(capture.message).foregroundStyle(.secondary) }
+                    if capture.phase == .idle {
+                        if !languageStatus.isEmpty { Text(languageStatus).font(.footnote).foregroundStyle(.secondary) }
+                        if languageStatus != "设备端语言包已就绪" {
+                            Button("准备日语和简中语言包") {
+                                download = .init(source: ButtonFrame.japanese, target: ButtonFrame.chinese)
+                            }
+                        }
+                        Text("个人词库 \(capture.pack.count) 条").font(.footnote).foregroundStyle(.secondary)
+                    }
+                }
+                .frame(maxWidth: 460, alignment: .leading).padding(28)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .onChange(of: scenePhase, initial: true) { _, phase in
-            live.setGameVisible(phase == .background)
+            capture.gameVisibility(background: phase == .background)
+        }
+        .task {
+            if await LanguageAvailability().status(from: ButtonFrame.japanese, to: ButtonFrame.chinese) == .installed {
+                languageStatus = "设备端语言包已就绪"
+            }
+        }
+        .translationTask(download) { session in
+            do {
+                try await session.prepareTranslation()
+                languageStatus = "设备端语言包已就绪"
+            } catch { languageStatus = "语言包尚未就绪，可再次下载。" }
         }
     }
 }

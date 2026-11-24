@@ -4,6 +4,7 @@ struct GameLexicon {
     private var words: [String: String] = [:]
     var count: Int { words.count }
     var error: String?
+    private(set) var gameURL: URL?
 
     struct Entry: Codable {
         let ja: String
@@ -11,6 +12,7 @@ struct GameLexicon {
     }
     struct Pack: Codable {
         let version: Int
+        var gameURLScheme: String?
         let entries: [Entry]
     }
 
@@ -35,6 +37,10 @@ struct GameLexicon {
             }
             let pack = try JSONDecoder().decode(Pack.self, from: Data(contentsOf: personal, options: .mappedIfSafe))
             guard pack.version == 1 else { result.error = "个人词库格式版本不兼容。"; return result }
+            if let scheme = pack.gameURLScheme, scheme.contains("."),
+               scheme.range(of: "^[a-z][a-z0-9.-]{2,79}$", options: .regularExpression) != nil {
+                result.gameURL = URL(string: scheme + "://")
+            }
             var ambiguous = Set<String>()
             for row in pack.entries {
                 let key = Self.key(row.ja)
