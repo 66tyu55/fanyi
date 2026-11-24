@@ -21,6 +21,9 @@ struct LiveView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 .accessibilityLabel("简体字幕预览")
             Text(live.message).foregroundStyle(.secondary)
+            if !live.lexiconStatus.isEmpty {
+                Text(live.lexiconStatus).font(.footnote).foregroundStyle(.secondary)
+            }
             Button(live.canStart ? "开始实时翻译" : "停止翻译") {
                 if live.canStart { live.start() } else { live.stop() }
             }

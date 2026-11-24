@@ -11,6 +11,7 @@ final class LiveTranslator: NSObject, ObservableObject, SCContentSharingPickerOb
     let captions = Captions()
     @Published private(set) var message = "点开始，共享屏幕后切回游戏。"
     @Published private(set) var downloadRequest: UUID?
+    @Published private(set) var lexiconStatus = ""
     @Published private var phase: Phase = .idle
     var canStart: Bool { phase == .idle }
     var isStopping: Bool { phase == .stopping }
@@ -28,6 +29,7 @@ final class LiveTranslator: NSObject, ObservableObject, SCContentSharingPickerOb
     private var emptyFrames = 0
     private var worker: Task<Void, Never>?
     private var cache: [String: String] = [:]
+    private var lexicon = GameLexicon()
     private var cacheOrder: [String] = []
 
     override init() {
@@ -48,6 +50,10 @@ final class LiveTranslator: NSObject, ObservableObject, SCContentSharingPickerOb
         phase = .preparing
         message = "正在检查日语和简体中文语言包…"
         Task {
+            let loaded = await Task.detached(priority: .userInitiated) { GameLexicon.load() }.value
+            guard ticket == generation, phase == .preparing else { return }
+            lexicon = loaded
+            lexiconStatus = loaded.error ?? "个人词库 \(loaded.count) 条"
             let availability = await LanguageAvailability().status(from: Self.japanese, to: Self.chinese)
             guard ticket == generation, phase == .preparing else { return }
             switch availability {
@@ -166,7 +172,11 @@ final class LiveTranslator: NSObject, ObservableObject, SCContentSharingPickerOb
     }
 
     private func displayCached() {
-        rendered = latest.compactMap { cache[$0] }
+        rendered = latest.compactMap { lexicon.lookup($0) ?? cache[$0] }
+        if !latest.isEmpty, lexicon.count > 0 {
+            let hits = latest.filter { lexicon.lookup($0) != nil }.count
+            lexiconStatus = "个人词库 \(lexicon.count) 条 · 最近一屏命中 \(hits)/\(latest.count)"
+        }
         captions.show(rendered)
     }
 
@@ -174,7 +184,7 @@ final class LiveTranslator: NSObject, ObservableObject, SCContentSharingPickerOb
         defer { if generation == ticket { worker = nil } }
         guard let session else { return }
         while !Task.isCancelled && ticket == generation {
-            let unknown = latest.filter { cache[$0] == nil }.prefix(12)
+            let unknown = latest.filter { lexicon.lookup($0) == nil && cache[$0] == nil }.prefix(12)
             if unknown.isEmpty { return }
             let requests = unknown.map { TranslationSession.Request(sourceText: $0, clientIdentifier: $0) }
             do {

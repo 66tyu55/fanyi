@@ -190,12 +190,12 @@ final class Captions: NSObject, AVPictureInPictureControllerDelegate, AVPictureI
     func pictureInPictureControllerDidStopPictureInPicture(_ controller: AVPictureInPictureController) {
         if wantsWindow { onDismiss?() }
     }
-    func pictureInPictureController(_ controller: AVPictureInPictureController, setPlaying playing: Bool) {}
-    func pictureInPictureControllerTimeRangeForPlayback(_ controller: AVPictureInPictureController) -> CMTimeRange {
-        CMTimeRange(start: .negativeInfinity, duration: .positiveInfinity)
+    nonisolated func pictureInPictureController(_ controller: AVPictureInPictureController, setPlaying playing: Bool) {}
+    nonisolated func pictureInPictureControllerTimeRangeForPlayback(_ controller: AVPictureInPictureController) -> CMTimeRange {
+        CMTimeRange(start: .zero, duration: .positiveInfinity)
     }
-    func pictureInPictureControllerIsPlaybackPaused(_ controller: AVPictureInPictureController) -> Bool { false }
-    func pictureInPictureController(_ controller: AVPictureInPictureController, didTransitionToRenderSize newRenderSize: CMVideoDimensions) {}
-    func pictureInPictureController(_ controller: AVPictureInPictureController, skipByInterval interval: CMTime,
-                                    completionHandler: @escaping () -> Void) { completionHandler() }
+    nonisolated func pictureInPictureControllerIsPlaybackPaused(_ controller: AVPictureInPictureController) -> Bool { false }
+    nonisolated func pictureInPictureController(_ controller: AVPictureInPictureController, didTransitionToRenderSize newRenderSize: CMVideoDimensions) {}
+    nonisolated func pictureInPictureController(_ controller: AVPictureInPictureController, skipByInterval interval: CMTime,
+                                                completion: @escaping () -> Void) { completion() }
 }
