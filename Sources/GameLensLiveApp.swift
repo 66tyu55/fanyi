@@ -15,18 +15,22 @@ struct GameLensView: View {
     var body: some View {
         Group {
             if let image = capture.preview {
-                ZStack(alignment: .bottomTrailing) {
-                    Color.black.ignoresSafeArea()
-                    Image(uiImage: image)
-                        .resizable().scaledToFit()
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .ignoresSafeArea()
-                        .accessibilityLabel(capture.message)
-                    Button(capture.pack.gameURL == nil ? "收起" : "收起，回游戏") {
-                        capture.returnToGame()
+                GeometryReader { geometry in
+                    let portraitWindow = image.size.width > image.size.height && geometry.size.height > geometry.size.width
+                    let w = portraitWindow ? geometry.size.height : geometry.size.width
+                    let h = portraitWindow ? geometry.size.width : geometry.size.height
+                    ZStack(alignment: .bottomTrailing) {
+                        Color.black
+                        Image(uiImage: image).resizable().scaledToFit()
+                            .frame(width: w, height: h).accessibilityLabel(capture.message)
+                        Button(capture.pack.gameURL == nil ? "收起" : "收起，回游戏") { capture.returnToGame() }
+                            .buttonStyle(.borderedProminent).padding(12)
                     }
-                    .buttonStyle(.borderedProminent).padding(10)
+                    .frame(width: w, height: h)
+                    .rotationEffect(.degrees(portraitWindow ? 90 : 0))
+                    .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
                 }
+                .ignoresSafeArea()
                 .persistentSystemOverlays(.hidden)
             } else {
                 VStack(alignment: .leading, spacing: 18) {

@@ -149,18 +149,10 @@ final class CaptureOnce: NSObject, ObservableObject, SCContentSharingPickerObser
                 message = "已标出 \(result.count) 处中文 · 词库命中 \(result.hits) 处"
                 phase = .preview
                 reader = nil
-                rotateForPreview(output.size)
             } catch {
                 if id == ticket { clear(error.localizedDescription) }
             }
         }
-    }
-
-    private func rotateForPreview(_ size: CGSize) {
-        guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })
-                .first(where: { $0.activationState == .foregroundActive }) else { return }
-        let orientation: UIInterfaceOrientationMask = size.width > size.height ? .landscape : .portrait
-        scene.requestGeometryUpdate(.iOS(interfaceOrientations: orientation)) { _ in }
     }
 
     func openGame() {
