@@ -1,0 +1,21 @@
+name: Build iPad translator
+on:
+  push:
+    branches: [ipad-live-translator]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: xcode-27
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile for iPad
+        run: python3 build.py build/GameLensLive.ipa
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GameLensLive-IPA
+          path: build/GameLensLive.ipa
+          if-no-files-found: error
+          retention-days: 7
