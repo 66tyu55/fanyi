@@ -184,11 +184,15 @@ final class Captions: NSObject, AVPictureInPictureControllerDelegate, AVPictureI
         if renderer.isReadyForMoreMediaData { renderer.enqueue(sample) }
     }
 
-    func pictureInPictureController(_ controller: AVPictureInPictureController, failedToStartPictureInPictureWithError error: Error) {
-        if wantsWindow { onFailure?(error.localizedDescription) }
+    nonisolated func pictureInPictureController(_ pip: AVPictureInPictureController, failedToStartPictureInPictureWithError error: Error) {
+        Task { @MainActor in
+            if wantsWindow && pip === controller { onFailure?(error.localizedDescription) }
+        }
     }
-    func pictureInPictureControllerDidStopPictureInPicture(_ controller: AVPictureInPictureController) {
-        if wantsWindow { onDismiss?() }
+    nonisolated func pictureInPictureControllerDidStopPictureInPicture(_ pip: AVPictureInPictureController) {
+        Task { @MainActor in
+            if wantsWindow && pip === controller { onDismiss?() }
+        }
     }
     nonisolated func pictureInPictureController(_ controller: AVPictureInPictureController, setPlaying playing: Bool) {}
     nonisolated func pictureInPictureControllerTimeRangeForPlayback(_ controller: AVPictureInPictureController) -> CMTimeRange {

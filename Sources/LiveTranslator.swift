@@ -100,8 +100,19 @@ final class LiveTranslator: NSObject, ObservableObject, SCContentSharingPickerOb
                                          for existing: SCStream?) {
         Task { @MainActor in
             if let existing, existing === self.stream, self.phase == .running {
-                do { try await existing.updateContentFilter(filter) }
-                catch { if self.stream === existing { self.stop(error.localizedDescription) } }
+                let ticket = UUID()
+                self.generation = ticket
+                self.phase = .starting
+                self.reader?.setEnabled(false)
+                self.reader = nil
+                self.stream = nil
+                self.worker?.cancel()
+                self.worker = nil
+                self.latest = []
+                self.rendered = []
+                self.captions.show([])
+                try? await existing.stopCapture()
+                if self.generation == ticket { await self.beginCapture(filter, keepWindow: true) }
             } else if existing == nil && self.phase == .picking {
                 await self.beginCapture(filter)
             }
@@ -120,7 +131,7 @@ final class LiveTranslator: NSObject, ObservableObject, SCContentSharingPickerOb
         }
     }
 
-    private func beginCapture(_ filter: SCContentFilter) async {
+    private func beginCapture(_ filter: SCContentFilter, keepWindow: Bool = false) async {
         let ticket = generation
         phase = .starting
         let output = ScreenTextReader { [weak self] values in
@@ -138,7 +149,7 @@ final class LiveTranslator: NSObject, ObservableObject, SCContentSharingPickerOb
                 try? await newStream.stopCapture()
                 return
             }
-            try captions.start()
+            if !keepWindow { try captions.start() }
             phase = .running
             output.setEnabled(gameVisible)
             message = "切回游戏即可读简体字幕。关闭小窗会结束共享。"
