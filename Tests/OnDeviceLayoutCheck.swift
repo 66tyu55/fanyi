@@ -17,6 +17,7 @@ private struct Fixture: Decodable {
 private struct Placement: Codable {
     let label: String
     let distance: Double?
+    var nearby: [String] = []
 }
 
 private struct SampleReport: Codable {
@@ -81,10 +82,36 @@ private struct LayoutCheckView: View {
                                 guard let text = observation.topCandidates(1).first?.string,
                                       GameLexicon.key(text).contains(key) else { return nil }
                                 let box = observation.boundingBox
-                                return hypot((box.midX - anchor.x) * CGFloat(image.width),
-                                             ((1 - box.midY) - anchor.y) * CGFloat(image.height))
+                                return hypot((box.midX - anchor.x) * CGFloat(source.width),
+                                             ((1 - box.midY) - anchor.y) * CGFloat(source.height))
                             }
-                            report.placements.append(Placement(label: anchor.target, distance: distances.min()))
+                            if let distance = distances.min() {
+                                report.placements.append(Placement(label: anchor.target, distance: distance))
+                            } else {
+                                let x = anchor.x * CGFloat(image.width), y = anchor.y * CGFloat(image.height)
+                                let field = CGRect(x: 0, y: 0, width: image.width, height: image.height)
+                                let span = max(0.085, CGFloat(key.count) * 0.027)
+                                let crop = CGRect(x: x - field.width * span / 2, y: y - field.height * 0.033,
+                                                  width: field.width * span, height: field.height * 0.066).integral.intersection(field)
+                                var local: [String] = []
+                                var offsets: [Double] = []
+                                if !crop.isEmpty, let piece = image.cropping(to: crop) {
+                                    let detail = VNRecognizeTextRequest()
+                                    detail.recognitionLevel = .accurate
+                                    detail.recognitionLanguages = ["zh-Hans"]
+                                    try VNImageRequestHandler(cgImage: piece, options: [:]).perform([detail])
+                                    for reading in detail.results ?? [] {
+                                        guard let value = reading.topCandidates(1).first?.string else { continue }
+                                        local.append(value)
+                                        if GameLexicon.key(value).contains(key) {
+                                            let b = reading.boundingBox
+                                            offsets.append(hypot((crop.minX + b.midX * crop.width - x) * CGFloat(source.width) / field.width,
+                                                                 (crop.minY + (1 - b.midY) * crop.height - y) * CGFloat(source.height) / field.height))
+                                        }
+                                    }
+                                }
+                                report.placements.append(Placement(label: anchor.target, distance: offsets.min(), nearby: local))
+                            }
                         }
                     } catch { let e = error as NSError; report.error = "\(e.domain)(\(e.code))" }
                     reports.append(report)

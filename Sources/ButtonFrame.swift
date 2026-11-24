@@ -77,7 +77,21 @@ struct ButtonFrame {
         return labels
     }
 
-    static func translate(_ image: CGImage, pack: GameLexicon) async throws -> Result {
+    static func translate(_ source: CGImage, pack: GameLexicon) async throws -> Result {
+        // Small source images need a larger recognition surface and enough pixels for Chinese strokes.
+        let longSide = max(source.width, source.height)
+        let image: CGImage
+        if longSide < 1600 {
+            let scale = min(2, 2048 / CGFloat(longSide))
+            let size = CGSize(width: (CGFloat(source.width) * scale).rounded(), height: (CGFloat(source.height) * scale).rounded())
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = 1
+            format.opaque = true
+            image = UIGraphicsImageRenderer(size: size, format: format).image { renderer in
+                renderer.cgContext.interpolationQuality = .high
+                UIImage(cgImage: source).draw(in: CGRect(origin: .zero, size: size))
+            }.cgImage ?? source
+        } else { image = source }
         let lines = try Self.lines(image, pack: pack)
         guard !lines.isEmpty else { throw Problem.empty }
         var translations: [String: String] = [:]
