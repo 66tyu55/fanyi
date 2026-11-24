@@ -39,7 +39,7 @@ struct ButtonFrame {
         return image
     }
 
-    static func lines(_ image: CGImage) throws -> [Line] {
+    static func lines(_ image: CGImage, pack: GameLexicon) throws -> [Line] {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.recognitionLanguages = ["ja-JP", "en-US"]
@@ -66,7 +66,7 @@ struct ButtonFrame {
             }
             if groups.isEmpty { groups = [(candidate.string, result.boundingBox)] }
             for (text, b) in groups {
-                guard text.count <= 400, text.unicodeScalars.contains(where: {
+                guard text.count <= 400, pack.lookup(text) != nil || text.unicodeScalars.contains(where: {
                     (0x3040...0x30ff).contains($0.value) || (0x3400...0x9fff).contains($0.value) || (0xff66...0xff9f).contains($0.value)
                 }) else { continue }
                 let rect = CGRect(x: b.minX * extent.width, y: (1 - b.maxY) * extent.height,
@@ -78,7 +78,7 @@ struct ButtonFrame {
     }
 
     static func translate(_ image: CGImage, pack: GameLexicon) async throws -> Result {
-        let lines = try Self.lines(image)
+        let lines = try Self.lines(image, pack: pack)
         guard !lines.isEmpty else { throw Problem.empty }
         var translations: [String: String] = [:]
         var unknown: [String] = []
