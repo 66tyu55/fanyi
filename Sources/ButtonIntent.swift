@@ -9,7 +9,7 @@ struct TranslateGameButtons: AppIntent {
     var frame: IntentFile
 
     static var parameterSummary: some ParameterSummary {
-        Summary("在 \(.$frame) 原位显示中文")
+        Summary("在 \(\.$frame) 原位显示中文")
     }
 
     func perform() async throws -> some IntentResult & ReturnsValue<IntentFile> {
